@@ -39,11 +39,15 @@ func (EndCallTool) GetName() string              { return "EndCallTool" }
 func (BookingCancellationAgent) GetDescription() string {
 	return "Cancel active delivery order due to rider emergency, vehicle breakdown, or store closure"
 }
-func (EticketTool) GetDescription() string { return "Retrieve delivery order receipt and itemized customer invoice" }
+func (EticketTool) GetDescription() string {
+	return "Retrieve delivery order receipt and itemized customer invoice"
+}
 func (WebcheckinTool) GetDescription() string {
 	return "Confirm rider arrival at merchant store or customer drop-off location"
 }
-func (NameCorrectionTool) GetDescription() string { return "Update customer contact notes or address landmark" }
+func (NameCorrectionTool) GetDescription() string {
+	return "Update customer contact notes or address landmark"
+}
 func (SpecialClaimTool) GetDescription() string {
 	return "Submit payout dispute, order damage report, or missing item claim"
 }
@@ -56,7 +60,9 @@ func (DateChangeAgent) GetDescription() string {
 func (AgentConnectTool) GetDescription() string {
 	return "Transfer conversation to a human rider support representative"
 }
-func (EnquiryTool) GetDescription() string { return "Handle rider earnings, weekly payouts, and incentive bonus queries" }
+func (EnquiryTool) GetDescription() string {
+	return "Handle rider earnings, weekly payouts, and incentive bonus queries"
+}
 func (BaggageTool) GetDescription() string {
 	return "Check thermal bag requirements, cargo capacity, and weight limits"
 }

@@ -1,6 +1,6 @@
 module RiderMate-Bot-Service
 
-go 1.23
+go 1.25.0
 
 require (
 	cloud.google.com/go/auth v0.20.0

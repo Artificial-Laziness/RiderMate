@@ -1,7 +1,6 @@
 package gemini
 
 import (
-	"RiderMate-Bot-Service/tools/postSales"
 	"RiderMate-Bot-Service/tools/postSales/gemini"
 	"RiderMate-Bot-Service/tools/searchTool"
 	"RiderMate-Bot-Service/utils/apiLogUtils"
@@ -15,7 +14,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
