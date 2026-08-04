@@ -23,7 +23,7 @@ func TestNewGeminiLiveClient(t *testing.T) {
 		t.Fatal("Expected client to be non-nil")
 	}
 
-	if !client.IsConnected() {
-		// client is not connected before Connect()
+	if client.Model() != gemini.DefaultAudioModel {
+		t.Errorf("Expected default model %s, got %s", gemini.DefaultAudioModel, client.Model())
 	}
 }

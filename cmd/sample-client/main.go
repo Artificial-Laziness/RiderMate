@@ -34,7 +34,7 @@ func main() {
 	}
 	client.SetCallbacks(callbacks)
 
-	fmt.Printf("RiderMate Gemini Live Client created successfully: model=%s\n", pageConfig.BrandName)
+	fmt.Printf("RiderMate Gemini Live Client created successfully: model=%s\n", client.Model())
 	fmt.Println("Rider voice session and VAD setup initialized.")
 }
 

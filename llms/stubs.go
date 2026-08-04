@@ -100,8 +100,8 @@ type Callbacks struct {
 }
 
 // Global System Instruction Prompts
-var BaseInstructionPromptPSGeminiJustAudio = "You are a helpful delivery rider voice assistant for RiderMate. Speak concisely and clearly."
+var BaseInstructionPromptRiderSupportJustAudio = "You are a helpful delivery rider voice assistant for RiderMate. Speak concisely and clearly."
 
-func GetBaseInstructionPromptPSGemini() string {
+func GetBaseInstructionPromptRiderSupport() string {
 	return "You are a helpful hands-free voice assistant for BRAND_NAME delivery riders. Support riders with active order status, delivery routes, payout queries, store delays, and rider support escalation."
 }

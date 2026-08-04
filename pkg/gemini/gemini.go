@@ -1,7 +1,7 @@
 package gemini
 
 import (
-	"RiderMate-Bot-Service/tools/postSales/gemini"
+	"RiderMate-Bot-Service/tools/riderSupport/gemini"
 	"RiderMate-Bot-Service/tools/searchTool"
 	"RiderMate-Bot-Service/utils/apiLogUtils"
 	"RiderMate-Bot-Service/utils/consul"
@@ -30,7 +30,7 @@ var eventIDCounter uint64
 
 // Constants
 const (
-	DefaultAudioModel = "models/gemini-live-2.5-flash-native-audio"
+	DefaultAudioModel = "gemini-2.5-flash-native-audio-preview"
 	DefaultQueueSize  = 10000
 )
 
@@ -163,9 +163,9 @@ func (c *GeminiLiveClient) initializeSession(resumptionHandle string, isCustomMo
 		modalities = []genai.Modality{genai.ModalityAudio}
 	}
 
-	systemPrompt := strings.ReplaceAll(llms.GetBaseInstructionPromptPSGemini(), "BRAND_NAME", c.brandName)
+	systemPrompt := strings.ReplaceAll(llms.GetBaseInstructionPromptRiderSupport(), "BRAND_NAME", c.brandName)
 	if isCustomModel {
-		systemPrompt = llms.BaseInstructionPromptPSGeminiJustAudio
+		systemPrompt = llms.BaseInstructionPromptRiderSupportJustAudio
 	}
 
 	sessionConfig := &genai.LiveConnectConfig{
@@ -221,29 +221,23 @@ func (c *GeminiLiveClient) SetCallbacks(callbacks llms.Callbacks) {
 	c.callbacks = callbacks
 }
 
+func (c *GeminiLiveClient) SetModel(model string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.model = model
+}
+
+func (c *GeminiLiveClient) Model() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.model
+}
+
 func (c *GeminiLiveClient) setupAllTools(pageConfig llms.PageConfig) {
 	allTools := make(map[string]tools.CustomTools, 16)
 
-	var (
-		flightTool                = searchTool.SearchTool{}
-		flightDetailsTool         = tools.FlightInformationTool{}
-		nonReviewDiscountTool     = tools.DiscountTool{}
-		baggageTool               = tools.BaggageTool{}
-		cancellationTool          = tools.CancellationTool{}
-		dateChangeTool            = tools.DateChangeTool{}
-		visaTool                  = tools.VisaTool{}
-		reviewDiscountTool        = tools.ReviewDiscountTool{}
-		mealsTool                 = tools.MealsTool{}
-		seatsTool                 = tools.SeatsTool{}
-		insuranceTool             = tools.InsuranceTool{}
-		reviewFlightItineraryTool = tools.ReviewFlightItineraryTool{}
-		ancillariesTool           = tools.AncillariesTool{}
-		paymentTool               = tools.PaymentTool{}
-		addonTool                 = tools.AddonTool{}
-	)
-
-	if pageConfig.PageName == "POSTSALES" || pageConfig.PageName == "RIDER_SUPPORT" {
-		syso := strings.ReplaceAll(llms.GetBaseInstructionPromptPSGemini(), "BRAND_NAME", c.brandName) + pageConfig.Instruction
+	if pageConfig.PageName == "RIDER_SUPPORT" || pageConfig.PageName == "" {
+		syso := strings.ReplaceAll(llms.GetBaseInstructionPromptRiderSupport(), "BRAND_NAME", c.brandName) + pageConfig.Instruction
 
 		c.sessionConfig.SystemInstruction = &genai.Content{
 			Parts: []*genai.Part{
@@ -252,51 +246,67 @@ func (c *GeminiLiveClient) setupAllTools(pageConfig llms.PageConfig) {
 			Role: "model",
 		}
 
-		cancelTool := gemini.BookingCancellationAgent{}
-		etickettool := gemini.EticketTool{}
-		checkinBoardingPassTool := gemini.WebcheckinTool{}
-		nameChangeTool := gemini.NameCorrectionTool{}
+		cancelTool := gemini.OrderCancellationAgent{}
+		orderReceiptTool := gemini.OrderReceiptTool{}
+		storeArrivalTool := gemini.StoreArrivalTool{}
+		noteCorrectionTool := gemini.ContactNoteTool{}
 		specialClaimTool := gemini.SpecialClaimTool{}
 		trackerTool := gemini.ObservabilityTool{}
-		dateChangePsTool := gemini.DateChangeAgent{}
+		rescheduleTool := gemini.DateChangeAgent{}
 		agentTool := gemini.AgentConnectTool{}
 		enquiryTool := gemini.EnquiryTool{}
-		psbaggageTool := gemini.BaggageTool{}
-		addonPurchaesPsTool := gemini.AddonPurchaseAgent{}
-		psFlightStatusTool := gemini.PSFlightStatusTool{}
+		riderBaggageTool := gemini.BaggageTool{}
+		addonPurchaseTool := gemini.AddonPurchaseAgent{}
+		orderStatusTool := gemini.OrderStatusTool{}
 		endCallTool := gemini.EndCallTool{}
-		agentConnectTool := gemini.AgentConnectTool{}
 
 		allTools[cancelTool.GetName()] = cancelTool
-		allTools[etickettool.GetName()] = etickettool
-		allTools[checkinBoardingPassTool.GetName()] = checkinBoardingPassTool
-		allTools[nameChangeTool.GetName()] = nameChangeTool
+		allTools[orderReceiptTool.GetName()] = orderReceiptTool
+		allTools[storeArrivalTool.GetName()] = storeArrivalTool
+		allTools[noteCorrectionTool.GetName()] = noteCorrectionTool
 		allTools[specialClaimTool.GetName()] = specialClaimTool
 		allTools[trackerTool.GetName()] = trackerTool
-		allTools[dateChangePsTool.GetName()] = dateChangePsTool
+		allTools[rescheduleTool.GetName()] = rescheduleTool
 		allTools[agentTool.GetName()] = agentTool
 		allTools[enquiryTool.GetName()] = enquiryTool
-		allTools[psbaggageTool.GetName()] = psbaggageTool
-		allTools[addonPurchaesPsTool.GetName()] = addonPurchaesPsTool
-		allTools[psFlightStatusTool.GetName()] = psFlightStatusTool
+		allTools[riderBaggageTool.GetName()] = riderBaggageTool
+		allTools[addonPurchaseTool.GetName()] = addonPurchaseTool
+		allTools[orderStatusTool.GetName()] = orderStatusTool
 		allTools[endCallTool.GetName()] = endCallTool
-		allTools[agentConnectTool.GetName()] = agentConnectTool
 	} else {
-		allTools[flightTool.GetName()] = flightTool
-		allTools[flightDetailsTool.GetName()] = flightDetailsTool
-		allTools[nonReviewDiscountTool.GetName()] = nonReviewDiscountTool
-		allTools[baggageTool.GetName()] = baggageTool
-		allTools[cancellationTool.GetName()] = cancellationTool
-		allTools[dateChangeTool.GetName()] = dateChangeTool
-		allTools[visaTool.GetName()] = visaTool
-		allTools[reviewDiscountTool.GetName()] = reviewDiscountTool
-		allTools[mealsTool.GetName()] = mealsTool
-		allTools[seatsTool.GetName()] = seatsTool
-		allTools[insuranceTool.GetName()] = insuranceTool
-		allTools[reviewFlightItineraryTool.GetName()] = reviewFlightItineraryTool
-		allTools[ancillariesTool.GetName()] = ancillariesTool
-		allTools[paymentTool.GetName()] = paymentTool
-		allTools[addonTool.GetName()] = addonTool
+		var (
+			deliverySearchTool  = searchTool.SearchTool{}
+			deliveryInfoTool    = tools.DeliveryInformationTool{}
+			payoutTool          = tools.PayoutTool{}
+			thermalBagTool      = tools.ThermalBagTool{}
+			orderCancelTool     = tools.OrderCancellationTool{}
+			timeExtensionTool   = tools.TimeExtensionTool{}
+			storeWaitTool       = tools.StoreWaitTimeTool{}
+			bonusIncentiveTool  = tools.BonusIncentiveTool{}
+			cateringBoxTool     = tools.CateringBoxTool{}
+			vehicleSupportTool  = tools.VehicleSupportTool{}
+			incidentReportTool  = tools.IncidentReportTool{}
+			routeAssistanceTool = tools.RouteAssistanceTool{}
+			riderGearTool       = tools.RiderGearTool{}
+			riderPayoutTool     = tools.RiderPayoutTool{}
+			customerContactTool = tools.CustomerContactTool{}
+		)
+
+		allTools[deliverySearchTool.GetName()] = deliverySearchTool
+		allTools[deliveryInfoTool.GetName()] = deliveryInfoTool
+		allTools[payoutTool.GetName()] = payoutTool
+		allTools[thermalBagTool.GetName()] = thermalBagTool
+		allTools[orderCancelTool.GetName()] = orderCancelTool
+		allTools[timeExtensionTool.GetName()] = timeExtensionTool
+		allTools[storeWaitTool.GetName()] = storeWaitTool
+		allTools[bonusIncentiveTool.GetName()] = bonusIncentiveTool
+		allTools[cateringBoxTool.GetName()] = cateringBoxTool
+		allTools[vehicleSupportTool.GetName()] = vehicleSupportTool
+		allTools[incidentReportTool.GetName()] = incidentReportTool
+		allTools[routeAssistanceTool.GetName()] = routeAssistanceTool
+		allTools[riderGearTool.GetName()] = riderGearTool
+		allTools[riderPayoutTool.GetName()] = riderPayoutTool
+		allTools[customerContactTool.GetName()] = customerContactTool
 	}
 
 	c.tools = make(map[string]tools.CustomTools)

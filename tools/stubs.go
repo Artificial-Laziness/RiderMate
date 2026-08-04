@@ -28,35 +28,35 @@ func (m mockTool) GetParameters() map[string]interface{} {
 
 // Concrete Tool definitions matching the imports
 
-type FlightInformationTool struct{ mockTool }
-type DiscountTool struct{ mockTool }
-type BaggageTool struct{ mockTool }
-type CancellationTool struct{ mockTool }
-type DateChangeTool struct{ mockTool }
-type VisaTool struct{ mockTool }
-type ReviewDiscountTool struct{ mockTool }
-type MealsTool struct{ mockTool }
-type SeatsTool struct{ mockTool }
-type InsuranceTool struct{ mockTool }
-type ReviewFlightItineraryTool struct{ mockTool }
-type AncillariesTool struct{ mockTool }
-type PaymentTool struct{ mockTool }
-type AddonTool struct{ mockTool }
+type DeliveryInformationTool struct{ mockTool }
+type PayoutTool struct{ mockTool }
+type ThermalBagTool struct{ mockTool }
+type OrderCancellationTool struct{ mockTool }
+type TimeExtensionTool struct{ mockTool }
+type StoreWaitTimeTool struct{ mockTool }
+type BonusIncentiveTool struct{ mockTool }
+type CateringBoxTool struct{ mockTool }
+type VehicleSupportTool struct{ mockTool }
+type IncidentReportTool struct{ mockTool }
+type RouteAssistanceTool struct{ mockTool }
+type RiderGearTool struct{ mockTool }
+type RiderPayoutTool struct{ mockTool }
+type CustomerContactTool struct{ mockTool }
 
-func (FlightInformationTool) GetName() string     { return "DeliveryInformationTool" }
-func (DiscountTool) GetName() string              { return "PayoutTool" }
-func (BaggageTool) GetName() string               { return "ThermalBagTool" }
-func (CancellationTool) GetName() string          { return "OrderCancellationTool" }
-func (DateChangeTool) GetName() string            { return "TimeExtensionTool" }
-func (VisaTool) GetName() string                  { return "StoreWaitTimeTool" }
-func (ReviewDiscountTool) GetName() string        { return "BonusIncentiveTool" }
-func (MealsTool) GetName() string                 { return "CateringBoxTool" }
-func (SeatsTool) GetName() string                 { return "VehicleSupportTool" }
-func (InsuranceTool) GetName() string             { return "IncidentReportTool" }
-func (ReviewFlightItineraryTool) GetName() string { return "RouteAssistanceTool" }
-func (AncillariesTool) GetName() string           { return "RiderGearTool" }
-func (PaymentTool) GetName() string               { return "RiderPayoutTool" }
-func (AddonTool) GetName() string                 { return "CustomerContactTool" }
+func (DeliveryInformationTool) GetName() string { return "DeliveryInformationTool" }
+func (PayoutTool) GetName() string              { return "PayoutTool" }
+func (ThermalBagTool) GetName() string          { return "ThermalBagTool" }
+func (OrderCancellationTool) GetName() string   { return "OrderCancellationTool" }
+func (TimeExtensionTool) GetName() string       { return "TimeExtensionTool" }
+func (StoreWaitTimeTool) GetName() string       { return "StoreWaitTimeTool" }
+func (BonusIncentiveTool) GetName() string      { return "BonusIncentiveTool" }
+func (CateringBoxTool) GetName() string         { return "CateringBoxTool" }
+func (VehicleSupportTool) GetName() string      { return "VehicleSupportTool" }
+func (IncidentReportTool) GetName() string      { return "IncidentReportTool" }
+func (RouteAssistanceTool) GetName() string     { return "RouteAssistanceTool" }
+func (RiderGearTool) GetName() string           { return "RiderGearTool" }
+func (RiderPayoutTool) GetName() string         { return "RiderPayoutTool" }
+func (CustomerContactTool) GetName() string     { return "CustomerContactTool" }
 
 // SelectTool returns the parsed tool based on a code string or placeholder
 func SelectTool(code string) interface{} {
