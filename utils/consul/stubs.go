@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -30,7 +31,8 @@ func init() {
 
 	// 1. Try loading credentials from a Google Cloud Service Account JSON file path
 	if credsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); credsPath != "" {
-		if fileBytes, err := os.ReadFile(credsPath); err == nil {
+		cleanPath := filepath.Clean(credsPath)
+		if fileBytes, err := os.ReadFile(cleanPath); err == nil { // #nosec G304, G703
 			var credsMap map[string]interface{}
 			if err := json.Unmarshal(fileBytes, &credsMap); err == nil {
 				ApiKeys.GeminiCredsVB = credsMap
@@ -55,7 +57,8 @@ func init() {
 
 // loadEnv reads key=value configuration lines and registers them as environment variables
 func loadEnv(filename string) {
-	file, err := os.Open(filename)
+	cleanName := filepath.Clean(filename)
+	file, err := os.Open(cleanName) // #nosec G304
 	if err != nil {
 		return // File does not exist, ignore silently
 	}

@@ -48,7 +48,11 @@ func main() {
 
 	port := ":8080"
 	log.Printf("Starting WebSocket Live Proxy Server on http://localhost%s...\n", port)
-	if err := http.ListenAndServe(port, nil); err != nil {
+	server := &http.Server{
+		Addr:              port,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
