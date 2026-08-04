@@ -7,7 +7,7 @@ Welcome! This guide will help you set up, develop, test, and contribute to the `
 ## 1. Prerequisites & Installation
 
 To develop in this repository, you need:
-*   **Go**: Version `1.23` or higher.
+*   **Go**: Version `1.26.5` or higher.
 *   **Git**: For version control.
 
 Verify your environment setup:
