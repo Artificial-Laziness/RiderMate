@@ -152,13 +152,13 @@ sequenceDiagram
     Note over Browser: Assistant bubble is locked (isFinal = true). Next generation spawns a new bubble.
 
     Note over Browser,Gemini: 4. Tool Invocation & Execution
-    Gemini->>Proxy: ToolCall request (e.g. BookingCancellationAgent)
-    Proxy->>Browser: tool_call {"toolName": "BookingCancellationAgent", "toolArgs": {...}}
-    Proxy->>Browser: event {"type": "tool_call", "text": "Tool Invoked: BookingCancellationAgent"}
+    Gemini->>Proxy: ToolCall request (e.g. OrderCancellationAgent)
+    Proxy->>Browser: tool_call {"toolName": "OrderCancellationAgent", "toolArgs": {...}}
+    Proxy->>Browser: event {"type": "tool_call", "text": "Tool Invoked: OrderCancellationAgent"}
     Note over Browser: Tool logs are rendered; styled Glassmorphic Tool Invoked Pill is shown
 
-    Proxy->>Proxy: ExecuteTool(BookingCancellationAgent) -> JSON Mock Result
-    Proxy->>Browser: event {"type": "tool_response", "text": "Tool Complete: BookingCancellationAgent -> SUCCESS"}
+    Proxy->>Proxy: ExecuteTool(OrderCancellationAgent) -> JSON Mock Result
+    Proxy->>Browser: event {"type": "tool_response", "text": "Tool Complete: OrderCancellationAgent -> SUCCESS"}
     Note over Browser: Styled Glassmorphic Tool Complete Pill is shown
 
     Proxy->>Gemini: Send Tool Response Input

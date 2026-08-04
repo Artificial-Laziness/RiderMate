@@ -23,7 +23,12 @@ func TestNewGeminiLiveClient(t *testing.T) {
 		t.Fatal("Expected client to be non-nil")
 	}
 
-	if !client.IsConnected() {
-		// client is not connected before Connect()
+	if client.Model() != gemini.DefaultAudioModel {
+		t.Errorf("Expected default model %s, got %s", gemini.DefaultAudioModel, client.Model())
+	}
+
+	client.SetModel(gemini.BidiFlash001Model)
+	if client.Model() != gemini.BidiFlash001Model {
+		t.Errorf("Expected model %s after SetModel, got %s", gemini.BidiFlash001Model, client.Model())
 	}
 }

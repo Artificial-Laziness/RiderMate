@@ -65,7 +65,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 
 	// Config
 	pageConfig := llms.PageConfig{
-		PageName:      "POSTSALES",
+		PageName:      "RIDER_SUPPORT",
 		IsCustomModel: false,
 		BrandName:     "RiderMate",
 		Instruction:   "Provide instant, voice-first assistance to delivery riders on active orders, earnings, route guidance, and support.",
@@ -290,7 +290,7 @@ func emulateSandboxDialogue(prompt string, writeJSON func(WSMessage) error) {
 	if containsAny(prompt, "cancel", "refund", "status", "order") {
 		_ = writeJSON(WSMessage{
 			Type:     "tool_call",
-			ToolName: "BookingCancellationAgent",
+			ToolName: "OrderCancellationAgent",
 			ToolArgs: map[string]any{
 				"orderId": "RD892104",
 				"reason":  "Store closed / rider emergency",
