@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/auth v0.22.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/json-iterator/go v1.1.12
-	google.golang.org/genai v1.62.0
+	google.golang.org/genai v1.66.0
 )
 
 require (
