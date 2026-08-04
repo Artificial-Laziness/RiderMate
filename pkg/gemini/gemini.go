@@ -391,7 +391,7 @@ func (c *GeminiLiveClient) Close() error {
 
 	c.connected = false
 	if c.session != nil {
-		c.session.Close()
+		_ = c.session.Close()
 	}
 	if c.cancel != nil {
 		c.cancel()
