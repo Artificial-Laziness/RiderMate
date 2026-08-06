@@ -28,7 +28,7 @@ var eventIDCounter uint64
 
 // Constants
 const (
-	DefaultAudioModel = "gemini-2.5-flash-native-audio-preview"
+	DefaultAudioModel = "gemini-live-2.5-flash-native-audio"
 	DefaultQueueSize  = 10000
 )
 
