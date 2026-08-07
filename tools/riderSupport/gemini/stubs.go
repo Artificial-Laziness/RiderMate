@@ -74,16 +74,45 @@ func (OrderStatusTool) GetDescription() string {
 }
 func (EndCallTool) GetDescription() string { return "Hang up or end rider voice session" }
 
-func (OrderCancellationAgent) GetParameters() map[string]interface{} { return nil }
-func (OrderReceiptTool) GetParameters() map[string]interface{}       { return nil }
-func (StoreArrivalTool) GetParameters() map[string]interface{}       { return nil }
-func (ContactNoteTool) GetParameters() map[string]interface{}        { return nil }
-func (SpecialClaimTool) GetParameters() map[string]interface{}       { return nil }
-func (ObservabilityTool) GetParameters() map[string]interface{}      { return nil }
-func (DateChangeAgent) GetParameters() map[string]interface{}        { return nil }
-func (AgentConnectTool) GetParameters() map[string]interface{}       { return nil }
-func (EnquiryTool) GetParameters() map[string]interface{}            { return nil }
-func (BaggageTool) GetParameters() map[string]interface{}            { return nil }
-func (AddonPurchaseAgent) GetParameters() map[string]interface{}     { return nil }
-func (OrderStatusTool) GetParameters() map[string]interface{}        { return nil }
-func (EndCallTool) GetParameters() map[string]interface{}            { return nil }
+func (OrderCancellationAgent) GetParameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "OBJECT",
+		"properties": map[string]interface{}{
+			"orderId": map[string]interface{}{"type": "STRING", "description": "Active order ID"},
+			"reason":  map[string]interface{}{"type": "STRING", "description": "Cancellation reason"},
+		},
+	}
+}
+func (OrderReceiptTool) GetParameters() map[string]interface{}  { return nil }
+func (StoreArrivalTool) GetParameters() map[string]interface{}  { return nil }
+func (ContactNoteTool) GetParameters() map[string]interface{}   { return nil }
+func (SpecialClaimTool) GetParameters() map[string]interface{}  { return nil }
+func (ObservabilityTool) GetParameters() map[string]interface{} { return nil }
+func (DateChangeAgent) GetParameters() map[string]interface{}   { return nil }
+func (AgentConnectTool) GetParameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "OBJECT",
+		"properties": map[string]interface{}{
+			"queue": map[string]interface{}{"type": "STRING", "description": "Priority queue name"},
+		},
+	}
+}
+func (EnquiryTool) GetParameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "OBJECT",
+		"properties": map[string]interface{}{
+			"query": map[string]interface{}{"type": "STRING", "description": "Payout or earnings query"},
+		},
+	}
+}
+func (BaggageTool) GetParameters() map[string]interface{}        { return nil }
+func (AddonPurchaseAgent) GetParameters() map[string]interface{} { return nil }
+func (OrderStatusTool) GetParameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "OBJECT",
+		"properties": map[string]interface{}{
+			"orderId": map[string]interface{}{"type": "STRING", "description": "Active delivery order ID"},
+		},
+	}
+}
+func (EndCallTool) GetParameters() map[string]interface{} { return nil }

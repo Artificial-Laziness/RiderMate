@@ -34,7 +34,7 @@ export function ChatLog({ messages, isAssistantTyping, sessionId }) {
             <p style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>Speak into your mic or type a text message below.</p>
           </div>
         ) : (
-          messages.map((msg) => {
+          messages.filter(msg => msg.role === 'event' || (msg.text && msg.text.trim().length > 0)).map((msg) => {
             if (msg.role === 'event') {
               return (
                 <div

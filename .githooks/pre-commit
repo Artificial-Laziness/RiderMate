@@ -1,0 +1,26 @@
+#!/bin/bash
+set -e
+
+echo "🔒 Running Pre-Commit Security Checks..."
+
+# Ensure GOPATH/bin is included in PATH
+GOPATH=$(go env GOPATH)
+export PATH="$GOPATH/bin:$PATH"
+
+# 1. Run govulncheck
+if command -v govulncheck >/dev/null 2>&1; then
+    echo "🔍 Running govulncheck..."
+    govulncheck ./...
+else
+    echo "⚠️ govulncheck not found. Install with: go install golang.org/x/vuln/cmd/govulncheck@latest"
+fi
+
+# 2. Run gosec
+if command -v gosec >/dev/null 2>&1; then
+    echo "🛡️ Running gosec security scan..."
+    gosec -quiet ./...
+else
+    echo "⚠️ gosec not found. Install with: go install github.com/securego/gosec/v2/cmd/gosec@latest"
+fi
+
+echo "✅ Pre-Commit Security Checks Passed!"

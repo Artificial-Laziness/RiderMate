@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,11 +55,15 @@ type bidiSetupPayload struct {
 }
 
 type bidiSetupConfig struct {
-	Model             string                `json:"model"`
-	GenerationConfig  *bidiGenerationConfig `json:"generationConfig,omitempty"`
-	SystemInstruction *bidiContent          `json:"systemInstruction,omitempty"`
-	Tools             []*bidiTool           `json:"tools,omitempty"`
+	Model                    string                        `json:"model"`
+	GenerationConfig         *bidiGenerationConfig         `json:"generationConfig,omitempty"`
+	SystemInstruction        *bidiContent                  `json:"systemInstruction,omitempty"`
+	Tools                    []*bidiTool                   `json:"tools,omitempty"`
+	InputAudioTranscription  *bidiAudioTranscriptionConfig `json:"inputAudioTranscription,omitempty"`
+	OutputAudioTranscription *bidiAudioTranscriptionConfig `json:"outputAudioTranscription,omitempty"`
 }
+
+type bidiAudioTranscriptionConfig struct{}
 
 type bidiGenerationConfig struct {
 	ResponseModalities []string          `json:"responseModalities,omitempty"`
@@ -104,12 +111,36 @@ type bidiFunctionDeclaration struct {
 type bidiServerMessage struct {
 	ServerContent *bidiServerContent `json:"serverContent,omitempty"`
 	ToolCall      *bidiToolCall      `json:"toolCall,omitempty"`
+	UsageMetadata *bidiUsageMetadata `json:"usageMetadata,omitempty"`
 }
 
 type bidiServerContent struct {
-	ModelTurn    *bidiContent `json:"modelTurn,omitempty"`
-	Interrupted  bool         `json:"interrupted,omitempty"`
-	TurnComplete bool         `json:"turnComplete,omitempty"`
+	ModelTurn           *bidiContent       `json:"modelTurn,omitempty"`
+	UserTurn            *bidiContent       `json:"userTurn,omitempty"`
+	InputTranscription  *bidiTranscription `json:"inputTranscription,omitempty"`
+	OutputTranscription *bidiTranscription `json:"outputTranscription,omitempty"`
+	Interrupted         bool               `json:"interrupted,omitempty"`
+	TurnComplete        bool               `json:"turnComplete,omitempty"`
+	GenerationComplete  bool               `json:"generationComplete,omitempty"`
+}
+
+type bidiTranscription struct {
+	Text     string `json:"text,omitempty"`
+	Finished bool   `json:"finished,omitempty"`
+}
+
+type bidiUsageMetadata struct {
+	PromptTokenCount        int                       `json:"promptTokenCount,omitempty"`
+	CandidatesTokenCount    int                       `json:"candidatesTokenCount,omitempty"`
+	TotalTokenCount         int                       `json:"totalTokenCount,omitempty"`
+	CachedContentTokenCount int                       `json:"cachedContentTokenCount,omitempty"`
+	PromptTokensDetails     []*bidiModalityTokenCount `json:"promptTokensDetails,omitempty"`
+	CandidatesTokensDetails []*bidiModalityTokenCount `json:"candidatesTokensDetails,omitempty"`
+}
+
+type bidiModalityTokenCount struct {
+	Modality   string `json:"modality,omitempty"`
+	TokenCount int    `json:"tokenCount,omitempty"`
 }
 
 type bidiToolCall struct {
@@ -152,7 +183,7 @@ type GeminiLiveClient struct {
 	connected bool
 
 	// Event handling
-	eventQueue chan *genai.LiveServerMessage
+	eventQueue chan *bidiServerMessage
 
 	// Conversation tracking
 	conversationId string
@@ -183,11 +214,28 @@ type GeminiLiveClient struct {
 	ResumptionHandle string
 
 	customModel bool
+
+	// Per-session logger
+	sessionLogger *log.Logger
+	logFile       *os.File
 }
 
 // NewGeminiLiveClient creates a new instance of GeminiLiveClient
 func NewGeminiLiveClient(conversationId string, audioMode llms.AudioMode, pageConfig llms.PageConfig) (*GeminiLiveClient, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Initialize per-session dedicated log file
+	_ = os.MkdirAll("logs", 0750)
+	cleanID := filepath.Base(conversationId)
+	logPath := filepath.Join("logs", fmt.Sprintf("%s.log", cleanID))
+	// #nosec G304 -- Log file path is scoped inside local logs directory
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	var sessionLogger *log.Logger
+	if err == nil {
+		sessionLogger = log.New(logFile, "", log.LstdFlags)
+	} else {
+		apiLogUtils.LogGeneralError("Failed to open session log file %s: %v", logPath, err)
+	}
 
 	geminiClient := &GeminiLiveClient{
 		model:          DefaultAudioModel,
@@ -198,7 +246,7 @@ func NewGeminiLiveClient(conversationId string, audioMode llms.AudioMode, pageCo
 		ctx:            ctx,
 		cancel:         cancel,
 		connected:      false,
-		eventQueue:     make(chan *genai.LiveServerMessage, DefaultQueueSize),
+		eventQueue:     make(chan *bidiServerMessage, DefaultQueueSize),
 		conversationId: conversationId,
 		callbacks:      llms.Callbacks{},
 		writeQueue:     make(chan interface{}, 200),
@@ -206,6 +254,8 @@ func NewGeminiLiveClient(conversationId string, audioMode llms.AudioMode, pageCo
 		jsonStream:     jsoniter.NewStream(jsoniter.ConfigCompatibleWithStandardLibrary, nil, 512),
 		customModel:    pageConfig.IsCustomModel,
 		brandName:      pageConfig.BrandName,
+		sessionLogger:  sessionLogger,
+		logFile:        logFile,
 	}
 
 	geminiClient.initializeSession("", pageConfig.IsCustomModel)
@@ -415,17 +465,18 @@ func (c *GeminiLiveClient) Connect() error {
 	}
 	credsFromFile, err := credentials.DetectDefault(&options)
 	if err != nil {
-		apiLogUtils.LogGeneralError("Failed to detect credentials: %v", err)
+		c.LogError("Failed to detect credentials: %v", err)
 	} else {
 		tok, errTok := credsFromFile.Token(c.ctx)
 		if errTok != nil {
-			apiLogUtils.LogGeneralError("Failed to obtain token from credentials: %v", errTok)
+			c.LogError("Failed to obtain token from credentials: %v", errTok)
 		} else if tok != nil {
 			tokenValue = tok.Value
 		}
 	}
 
 	if tokenValue == "" {
+		// #nosec G101 -- Offline sandbox fallback token when Google Cloud credentials are unavailable
 		tokenValue = "mock-bearer-token"
 	}
 
@@ -447,7 +498,7 @@ func (c *GeminiLiveClient) Connect() error {
 
 	conn, _, err := dialer.DialContext(c.ctx, wsURL, headers)
 	if err != nil {
-		apiLogUtils.LogGeneralError("Failed to dial WebSocket %s: %v", wsURL, err)
+		c.LogError("Failed to dial WebSocket %s: %v", wsURL, err)
 		c.cancel()
 		return fmt.Errorf("failed to connect to Gemini Live WebSocket: %w", err)
 	}
@@ -468,7 +519,7 @@ func (c *GeminiLiveClient) Connect() error {
 	go c.handleWebSocketWrites()
 	go c.heartbeat()
 
-	apiLogUtils.LogGeneralInfo(c.conversationId + " Successfully connected to Gemini Live via Barebones WebSocket")
+	c.LogInfo("Successfully connected to Gemini Live via Barebones WebSocket")
 	return nil
 }
 
@@ -487,6 +538,8 @@ func (c *GeminiLiveClient) sendSetupPayload(projectID, location string) error {
 				ResponseModalities: modalities,
 				Temperature:        c.sessionConfig.Temperature,
 			},
+			InputAudioTranscription:  &bidiAudioTranscriptionConfig{},
+			OutputAudioTranscription: &bidiAudioTranscriptionConfig{},
 		},
 	}
 
@@ -521,9 +574,14 @@ func (c *GeminiLiveClient) sendSetupPayload(projectID, location string) error {
 				var fds []*bidiFunctionDeclaration
 				for _, fd := range tool.FunctionDeclarations {
 					if fd != nil {
+						var params map[string]interface{}
+						if tObj, ok := c.tools[fd.Name]; ok {
+							params = tObj.GetParameters()
+						}
 						fds = append(fds, &bidiFunctionDeclaration{
 							Name:        fd.Name,
 							Description: fd.Description,
+							Parameters:  params,
 						})
 					}
 				}
@@ -542,6 +600,22 @@ func (c *GeminiLiveClient) sendSetupPayload(projectID, location string) error {
 	return c.conn.WriteJSON(setupMsg)
 }
 
+func (c *GeminiLiveClient) LogInfo(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	apiLogUtils.LogGeneralInfo("%s %s", c.conversationId, msg)
+	if c.sessionLogger != nil {
+		c.sessionLogger.Printf("[INFO] %s", msg)
+	}
+}
+
+func (c *GeminiLiveClient) LogError(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	apiLogUtils.LogGeneralError("%s %s", c.conversationId, msg)
+	if c.sessionLogger != nil {
+		c.sessionLogger.Printf("[ERROR] %s", msg)
+	}
+}
+
 func (c *GeminiLiveClient) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -554,6 +628,10 @@ func (c *GeminiLiveClient) Close() error {
 	}
 	if c.cancel != nil {
 		c.cancel()
+	}
+	if c.logFile != nil {
+		_ = c.logFile.Close()
+		c.logFile = nil
 	}
 	return nil
 }
@@ -685,59 +763,26 @@ func (c *GeminiLiveClient) receiveResponses() {
 				if !isConn {
 					return
 				}
-				apiLogUtils.LogGeneralError("WebSocket read error: %v", err)
+				c.LogError("WebSocket read error: %v", err)
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 
+			c.LogInfo("[RAW BIDI RECV]: %s", summarizeBidiMessage(messageBytes))
+
 			var serverMsg bidiServerMessage
 			if err := json.Unmarshal(messageBytes, &serverMsg); err != nil {
-				apiLogUtils.LogGeneralError("Failed to unmarshal server message: %v", err)
+				c.LogError("Failed to unmarshal server message: %v", err)
 				continue
 			}
 
-			genaiMsg := convertBidiToServerMessage(&serverMsg)
 			select {
-			case c.eventQueue <- genaiMsg:
+			case c.eventQueue <- &serverMsg:
 			default:
-				go c.processServerResponse(genaiMsg)
+				go c.processServerResponse(&serverMsg)
 			}
 		}
 	}
-}
-
-func convertBidiToServerMessage(msg *bidiServerMessage) *genai.LiveServerMessage {
-	if msg == nil {
-		return nil
-	}
-	res := &genai.LiveServerMessage{}
-	if msg.ServerContent != nil {
-		res.ServerContent = &genai.LiveServerContent{
-			Interrupted:  msg.ServerContent.Interrupted,
-			TurnComplete: msg.ServerContent.TurnComplete,
-		}
-		if msg.ServerContent.ModelTurn != nil {
-			res.ServerContent.ModelTurn = &genai.Content{
-				Role: msg.ServerContent.ModelTurn.Role,
-			}
-			for _, p := range msg.ServerContent.ModelTurn.Parts {
-				if p == nil {
-					continue
-				}
-				part := &genai.Part{
-					Text: p.Text,
-				}
-				if p.InlineData != nil {
-					part.InlineData = &genai.Blob{
-						MIMEType: p.InlineData.MimeType,
-						Data:     p.InlineData.Data,
-					}
-				}
-				res.ServerContent.ModelTurn.Parts = append(res.ServerContent.ModelTurn.Parts, part)
-			}
-		}
-	}
-	return res
 }
 
 func (c *GeminiLiveClient) processEventQueue() {
@@ -751,17 +796,119 @@ func (c *GeminiLiveClient) processEventQueue() {
 	}
 }
 
-func (c *GeminiLiveClient) processServerResponse(response *genai.LiveServerMessage) {
-	if response == nil {
+func (c *GeminiLiveClient) processServerResponse(msg *bidiServerMessage) {
+	if msg == nil {
 		return
 	}
-	if response.ServerContent != nil {
-		if response.ServerContent.Interrupted {
+
+	// 1. Process Token Usage Metadata
+	if msg.UsageMetadata != nil && c.callbacks.TokenCalculator != nil {
+		var details []llms.TokenDetail
+		for _, detail := range msg.UsageMetadata.PromptTokensDetails {
+			if detail == nil {
+				continue
+			}
+			modality := llms.TokenModalityText
+			if strings.EqualFold(detail.Modality, "AUDIO") {
+				modality = llms.TokenModalityAudio
+			}
+			details = append(details, llms.TokenDetail{
+				TokenType:     llms.TokenTypeInput,
+				TokenModality: modality,
+				TokenCount:    detail.TokenCount,
+				ModelName:     c.model,
+			})
+		}
+		for _, detail := range msg.UsageMetadata.CandidatesTokensDetails {
+			if detail == nil {
+				continue
+			}
+			modality := llms.TokenModalityText
+			if strings.EqualFold(detail.Modality, "AUDIO") {
+				modality = llms.TokenModalityAudio
+			}
+			details = append(details, llms.TokenDetail{
+				TokenType:     llms.TokenTypeOutput,
+				TokenModality: modality,
+				TokenCount:    detail.TokenCount,
+				ModelName:     c.model,
+			})
+		}
+		if msg.UsageMetadata.CachedContentTokenCount > 0 {
+			details = append(details, llms.TokenDetail{
+				TokenType:     llms.TokenTypeCached,
+				TokenModality: llms.TokenModalityText,
+				TokenCount:    msg.UsageMetadata.CachedContentTokenCount,
+				ModelName:     c.model,
+			})
+		}
+		if len(details) == 0 {
+			if msg.UsageMetadata.PromptTokenCount > 0 {
+				details = append(details, llms.TokenDetail{
+					TokenType:     llms.TokenTypeInput,
+					TokenModality: llms.TokenModalityText,
+					TokenCount:    msg.UsageMetadata.PromptTokenCount,
+					ModelName:     c.model,
+				})
+			}
+			if msg.UsageMetadata.CandidatesTokenCount > 0 {
+				details = append(details, llms.TokenDetail{
+					TokenType:     llms.TokenTypeOutput,
+					TokenModality: llms.TokenModalityText,
+					TokenCount:    msg.UsageMetadata.CandidatesTokenCount,
+					ModelName:     c.model,
+				})
+			}
+		}
+		if len(details) > 0 {
+			c.callbacks.TokenCalculator.AddTokens(details)
+		}
+	}
+
+	// 2. Process Server Content (Model Turn, User Turn, Transcriptions, Interrupted, TurnComplete)
+	if msg.ServerContent != nil {
+		if msg.ServerContent.Interrupted {
 			c.HandleUserInterrupt()
 		}
-		if response.ServerContent.ModelTurn != nil {
-			for _, part := range response.ServerContent.ModelTurn.Parts {
+
+		// Input Audio Transcription (User spoken text)
+		if msg.ServerContent.InputTranscription != nil && msg.ServerContent.InputTranscription.Text != "" {
+			if c.callbacks.ConversationProvider != nil {
+				c.callbacks.ConversationProvider.AccumulateUserText(msg.ServerContent.InputTranscription.Text)
+			}
+		}
+
+		// User Turn Transcription (if userTurn parts exist)
+		if msg.ServerContent.UserTurn != nil && c.callbacks.ConversationProvider != nil {
+			for _, part := range msg.ServerContent.UserTurn.Parts {
+				if part != nil && part.Text != "" {
+					c.callbacks.ConversationProvider.AccumulateUserText(part.Text)
+				}
+			}
+		}
+
+		// Output Audio Transcription (Assistant spoken text)
+		if msg.ServerContent.OutputTranscription != nil && msg.ServerContent.OutputTranscription.Text != "" {
+			if c.callbacks.ConversationProvider != nil {
+				c.callbacks.ConversationProvider.AccumulateAssistantText(msg.ServerContent.OutputTranscription.Text)
+			}
+			output := llms.AudioOutput{Type: llms.OutputTypeText, Text: msg.ServerContent.OutputTranscription.Text}
+			select {
+			case c.textOutput <- output:
+			default:
+			}
+		}
+
+		// Model Turn Response
+		if msg.ServerContent.ModelTurn != nil {
+			for _, part := range msg.ServerContent.ModelTurn.Parts {
+				if part == nil {
+					continue
+				}
 				if part.Text != "" {
+					if c.callbacks.ConversationProvider != nil {
+						c.callbacks.ConversationProvider.AccumulateAssistantText(part.Text)
+					}
 					output := llms.AudioOutput{Type: llms.OutputTypeText, Text: part.Text}
 					select {
 					case c.textOutput <- output:
@@ -780,6 +927,43 @@ func (c *GeminiLiveClient) processServerResponse(response *genai.LiveServerMessa
 				}
 			}
 		}
+
+		if msg.ServerContent.TurnComplete || (msg.ServerContent.OutputTranscription != nil && msg.ServerContent.OutputTranscription.Finished) {
+			if c.callbacks.ConversationProvider != nil {
+				c.callbacks.ConversationProvider.CompleteAssistantMessage()
+				c.callbacks.ConversationProvider.CompleteUserMessage()
+			}
+		}
+	}
+
+	// 3. Process Tool Calls
+	if msg.ToolCall != nil && len(msg.ToolCall.FunctionCalls) > 0 {
+		for _, fc := range msg.ToolCall.FunctionCalls {
+			if fc == nil {
+				continue
+			}
+			toolObj, exists := c.tools[fc.Name]
+			if exists && c.callbacks.ToolExecutionProvider != nil {
+				argsBytes, _ := json.Marshal(fc.Args)
+				go func(callID, name, argsStr string, t tools.CustomTools) {
+					result, err := c.callbacks.ToolExecutionProvider.ExecuteTool(name, argsStr, t)
+					if err == nil && callID != "" {
+						respMsg := map[string]interface{}{
+							"toolResponse": map[string]interface{}{
+								"functionResponses": []map[string]interface{}{
+									{
+										"id":       callID,
+										"name":     name,
+										"response": map[string]interface{}{"result": result},
+									},
+								},
+							},
+						}
+						_ = c.sendEvent(respMsg)
+					}
+				}(fc.ID, fc.Name, string(argsBytes), toolObj)
+			}
+		}
 	}
 }
 
@@ -791,7 +975,39 @@ func (c *GeminiLiveClient) heartbeat() {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			apiLogUtils.LogGeneralInfo(c.conversationId + " [Heartbeat] Live session active")
+			c.LogInfo("[Heartbeat] Live session active")
+		}
+	}
+}
+
+func summarizeBidiMessage(rawJSON []byte) string {
+	var rawMap map[string]interface{}
+	if err := json.Unmarshal(rawJSON, &rawMap); err != nil {
+		return string(rawJSON)
+	}
+
+	sanitizeMap(rawMap)
+	out, err := json.Marshal(rawMap)
+	if err != nil {
+		return string(rawJSON)
+	}
+	return string(out)
+}
+
+func sanitizeMap(m map[string]interface{}) {
+	for k, v := range m {
+		if k == "data" {
+			if str, ok := v.(string); ok && len(str) > 40 {
+				m[k] = fmt.Sprintf("<base64 audio chunk, len: %d bytes>", len(str))
+			}
+		} else if subMap, ok := v.(map[string]interface{}); ok {
+			sanitizeMap(subMap)
+		} else if slice, ok := v.([]interface{}); ok {
+			for _, item := range slice {
+				if subMap, ok := item.(map[string]interface{}); ok {
+					sanitizeMap(subMap)
+				}
+			}
 		}
 	}
 }
