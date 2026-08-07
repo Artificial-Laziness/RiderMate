@@ -148,6 +148,21 @@ export function App() {
         addEventMessage('tool_call', `Tool Invoked: ${toolName}`);
       });
 
+      ws.on('tool_response', (msg) => {
+        const toolName = msg.toolName || msg.ToolName || '';
+        const resultText = msg.text || msg.Text || msg.result || '';
+        setToolsLog(prev => {
+          const copy = [...prev];
+          const idx = findLastIndex(copy, t => t.name === toolName && t.status === 'calling');
+          if (idx > -1) {
+            copy[idx] = { ...copy[idx], status: 'complete', result: resultText };
+          }
+          return copy;
+        });
+        addSystemLog(`Tool execution finished: ${toolName}`);
+        addEventMessage('tool_response', `Tool Result: ${toolName}`);
+      });
+
       ws.on('metrics', (msg) => {
         const tokenDetails = msg.tokenDetails || msg.TokenDetails || [];
         if (tokenDetails && tokenDetails.length > 0) {
@@ -158,14 +173,14 @@ export function App() {
               const modality = detail.modality || detail.Modality || '';
               const count = detail.count !== undefined ? detail.count : (detail.Count !== undefined ? detail.Count : 0);
               if (type === 'input') {
-                if (modality === 'text') updated.inputText = count;
-                else if (modality === 'audio') updated.inputAudio = count;
+                if (modality === 'text') updated.inputText = (prev.inputText || 0) + count;
+                else if (modality === 'audio') updated.inputAudio = (prev.inputAudio || 0) + count;
               } else if (type === 'cached') {
-                if (modality === 'text') updated.cachedText = count;
-                else if (modality === 'audio') updated.cachedAudio = count;
+                if (modality === 'text') updated.cachedText = (prev.cachedText || 0) + count;
+                else if (modality === 'audio') updated.cachedAudio = (prev.cachedAudio || 0) + count;
               } else if (type === 'output') {
-                if (modality === 'text') updated.outputText = count;
-                else if (modality === 'audio') updated.outputAudio = count;
+                if (modality === 'text') updated.outputText = (prev.outputText || 0) + count;
+                else if (modality === 'audio') updated.outputAudio = (prev.outputAudio || 0) + count;
               }
             });
             return updated;
@@ -261,6 +276,7 @@ export function App() {
   };
 
   const handleIncrementalTranscript = (role, chunkText = '') => {
+    if (!chunkText) return;
     setMessages((prev) => {
       const copy = [...prev];
       const idx = findLastIndex(copy, m => m.role === role && !m.isFinal);
@@ -277,14 +293,22 @@ export function App() {
   const finalizeTranscript = (role, finalFullText = '') => {
     setMessages((prev) => {
       const copy = [...prev];
-      const idx = findLastIndex(copy, m => m.role === role);
+      let idx = findLastIndex(copy, m => m.role === role && !m.isFinal);
+      if (idx === -1) {
+        idx = findLastIndex(copy, m => m.role === role);
+      }
       if (idx > -1) {
-        copy[idx] = { ...copy[idx], text: finalFullText || copy[idx].text || '', isFinal: true };
+        const updatedText = finalFullText || copy[idx].text || '';
+        if (!updatedText.trim()) {
+          return copy.filter((_, i) => i !== idx);
+        }
+        copy[idx] = { ...copy[idx], text: updatedText, isFinal: true };
         return copy;
-      } else {
+      } else if (finalFullText && finalFullText.trim()) {
         const currentTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         return [...prev, { id: role + '-' + Date.now(), role, text: finalFullText, isFinal: true, timestamp: currentTimestamp }];
       }
+      return prev;
     });
   };
 

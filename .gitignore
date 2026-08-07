@@ -18,6 +18,7 @@ coverage.txt
 .env.local
 .env.*.local
 session.json
+aawishkar-*.json
 
 # Node / Frontend
 node_modules/
@@ -45,3 +46,6 @@ Screenrecord.webm
 .DS_Store?
 ehthumbs.db
 Thumbs.db
+
+# Logs
+logs/

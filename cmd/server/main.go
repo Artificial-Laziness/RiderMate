@@ -499,5 +499,12 @@ func (w *wsToolExecutionProvider) ExecuteTool(name, arguments string, tool tools
 	// Perform standard mock behavior or let it execute
 	time.Sleep(1 * time.Second)
 	result := fmt.Sprintf(`{"status": "success", "result": "Mock result for tool %s"}`, name)
+
+	_ = w.writeJSON(WSMessage{
+		Type:     "tool_response",
+		ToolName: name,
+		Text:     result,
+	})
+
 	return result, nil
 }
