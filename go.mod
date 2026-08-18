@@ -3,7 +3,7 @@ module RiderMate-Bot-Service
 go 1.25.0
 
 require (
-	cloud.google.com/go/auth v0.22.0
+	cloud.google.com/go/auth v0.23.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/json-iterator/go v1.1.12
 	google.golang.org/genai v1.66.0
