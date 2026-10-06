@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -29,16 +30,24 @@ import (
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
 var eventIDCounter uint64
 
+// Backend represents the targeted Gemini Live platform
+type Backend string
+
+const (
+	BackendVertex   Backend = "vertex"
+	BackendAIStudio Backend = "aistudio"
+)
+
 // Constants
 const (
 	DefaultAudioModel = "gemini-live-2.5-flash-native-audio"
 	DefaultQueueSize  = 10000
 )
 
-// Default token configuration
+// Default token configuration (Vertex AI minimum floor for ContextWindowCompression)
 var (
-	defaultTriggerTokens = int64(25600)
-	defaultTargetTokens  = int64(12800)
+	defaultTriggerTokens = int64(5000)
+	defaultTargetTokens  = int64(2500)
 )
 
 // FunctionCallAccumulator holds accumulating function call data
@@ -55,12 +64,36 @@ type bidiSetupPayload struct {
 }
 
 type bidiSetupConfig struct {
-	Model                    string                        `json:"model"`
-	GenerationConfig         *bidiGenerationConfig         `json:"generationConfig,omitempty"`
-	SystemInstruction        *bidiContent                  `json:"systemInstruction,omitempty"`
-	Tools                    []*bidiTool                   `json:"tools,omitempty"`
-	InputAudioTranscription  *bidiAudioTranscriptionConfig `json:"inputAudioTranscription,omitempty"`
-	OutputAudioTranscription *bidiAudioTranscriptionConfig `json:"outputAudioTranscription,omitempty"`
+	Model                    string                              `json:"model"`
+	GenerationConfig         *bidiGenerationConfig               `json:"generationConfig,omitempty"`
+	SystemInstruction        *bidiContent                        `json:"systemInstruction,omitempty"`
+	Tools                    []*bidiTool                         `json:"tools,omitempty"`
+	InputAudioTranscription  *bidiAudioTranscriptionConfig       `json:"inputAudioTranscription,omitempty"`
+	OutputAudioTranscription *bidiAudioTranscriptionConfig       `json:"outputAudioTranscription,omitempty"`
+	ContextWindowCompression *bidiContextWindowCompressionConfig `json:"contextWindowCompression,omitempty"`
+	RealtimeInputConfig      *bidiRealtimeInputConfig            `json:"realtimeInputConfig,omitempty"`
+}
+
+type bidiRealtimeInputConfig struct {
+	TurnCoverage               string                          `json:"turnCoverage,omitempty"`
+	AutomaticActivityDetection *bidiAutomaticActivityDetection `json:"automaticActivityDetection,omitempty"`
+}
+
+type bidiAutomaticActivityDetection struct {
+	Disabled                 bool   `json:"disabled,omitempty"`
+	StartOfSpeechSensitivity string `json:"startOfSpeechSensitivity,omitempty"`
+	EndOfSpeechSensitivity   string `json:"endOfSpeechSensitivity,omitempty"`
+	PrefixPaddingMs          *int32 `json:"prefixPaddingMs,omitempty"`
+	SilenceDurationMs        *int32 `json:"silenceDurationMs,omitempty"`
+}
+
+type bidiContextWindowCompressionConfig struct {
+	TriggerTokens *int64             `json:"triggerTokens,omitempty"`
+	SlidingWindow *bidiSlidingWindow `json:"slidingWindow,omitempty"`
+}
+
+type bidiSlidingWindow struct {
+	TargetTokens *int64 `json:"targetTokens,omitempty"`
 }
 
 type bidiAudioTranscriptionConfig struct{}
@@ -106,12 +139,18 @@ type bidiFunctionDeclaration struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
 	Parameters  map[string]interface{} `json:"parameters,omitempty"`
+	Behavior    string                 `json:"behavior,omitempty"`
 }
 
 type bidiServerMessage struct {
+	SetupComplete *bidiSetupComplete `json:"setupComplete,omitempty"`
 	ServerContent *bidiServerContent `json:"serverContent,omitempty"`
 	ToolCall      *bidiToolCall      `json:"toolCall,omitempty"`
 	UsageMetadata *bidiUsageMetadata `json:"usageMetadata,omitempty"`
+}
+
+type bidiSetupComplete struct {
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 type bidiServerContent struct {
@@ -130,12 +169,17 @@ type bidiTranscription struct {
 }
 
 type bidiUsageMetadata struct {
-	PromptTokenCount        int                       `json:"promptTokenCount,omitempty"`
-	CandidatesTokenCount    int                       `json:"candidatesTokenCount,omitempty"`
-	TotalTokenCount         int                       `json:"totalTokenCount,omitempty"`
-	CachedContentTokenCount int                       `json:"cachedContentTokenCount,omitempty"`
-	PromptTokensDetails     []*bidiModalityTokenCount `json:"promptTokensDetails,omitempty"`
-	CandidatesTokensDetails []*bidiModalityTokenCount `json:"candidatesTokensDetails,omitempty"`
+	PromptTokenCount           int                       `json:"promptTokenCount,omitempty"`
+	CandidatesTokenCount       int                       `json:"candidatesTokenCount,omitempty"`
+	ResponseTokenCount         int                       `json:"responseTokenCount,omitempty"`
+	ThoughtsTokenCount         int                       `json:"thoughtsTokenCount,omitempty"`
+	ToolUsePromptTokenCount    int                       `json:"toolUsePromptTokenCount,omitempty"`
+	TotalTokenCount            int                       `json:"totalTokenCount,omitempty"`
+	CachedContentTokenCount    int                       `json:"cachedContentTokenCount,omitempty"`
+	PromptTokensDetails        []*bidiModalityTokenCount `json:"promptTokensDetails,omitempty"`
+	CandidatesTokensDetails    []*bidiModalityTokenCount `json:"candidatesTokensDetails,omitempty"`
+	ResponseTokensDetails      []*bidiModalityTokenCount `json:"responseTokensDetails,omitempty"`
+	ToolUsePromptTokensDetails []*bidiModalityTokenCount `json:"toolUsePromptTokensDetails,omitempty"`
 }
 
 type bidiModalityTokenCount struct {
@@ -158,8 +202,9 @@ type GeminiLiveClient struct {
 	id string
 
 	// Direct WebSocket connection
-	conn  *websocket.Conn
-	model string
+	conn    *websocket.Conn
+	model   string
+	backend Backend
 
 	// Configuration
 	audioMode     llms.AudioMode
@@ -199,6 +244,7 @@ type GeminiLiveClient struct {
 	// Function call accumulation fields
 	currentFunctionCall *FunctionCallAccumulator
 	functionCallMu      sync.RWMutex
+	pendingToolCalls    int32
 
 	// Unified write queues for thread-safe operations
 	writeQueue chan interface{} // All operations go through this
@@ -237,8 +283,15 @@ func NewGeminiLiveClient(conversationId string, audioMode llms.AudioMode, pageCo
 		apiLogUtils.LogGeneralError("Failed to open session log file %s: %v", logPath, err)
 	}
 
+	backendStr := strings.ToLower(os.Getenv("GEMINI_BACKEND"))
+	backend := BackendVertex
+	if backendStr == string(BackendAIStudio) || backendStr == "ais" {
+		backend = BackendAIStudio
+	}
+
 	geminiClient := &GeminiLiveClient{
 		model:          DefaultAudioModel,
+		backend:        backend,
 		audioMode:      audioMode,
 		tools:          make(map[string]tools.CustomTools),
 		audioOutput:    make(chan llms.AudioOutput, DefaultQueueSize),
@@ -309,7 +362,11 @@ func (c *GeminiLiveClient) initializeSession(resumptionHandle string, isCustomMo
 		RealtimeInputConfig: &genai.RealtimeInputConfig{
 			TurnCoverage: genai.TurnCoverageTurnIncludesOnlyActivity,
 			AutomaticActivityDetection: &genai.AutomaticActivityDetection{
-				Disabled: false,
+				Disabled:                 false,
+				StartOfSpeechSensitivity: genai.StartSensitivityHigh,
+				EndOfSpeechSensitivity:   genai.EndSensitivityLow,
+				PrefixPaddingMs:          genai.Ptr(int32(300)),
+				SilenceDurationMs:        genai.Ptr(int32(400)),
 			},
 		},
 		Tools: []*genai.Tool{},
@@ -321,6 +378,19 @@ func (c *GeminiLiveClient) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.connected
+}
+
+func (c *GeminiLiveClient) SetContextWindowCompression(triggerTokens, targetTokens int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sessionConfig != nil {
+		c.sessionConfig.ContextWindowCompression = &genai.ContextWindowCompressionConfig{
+			TriggerTokens: &triggerTokens,
+			SlidingWindow: &genai.SlidingWindow{
+				TargetTokens: &targetTokens,
+			},
+		}
+	}
 }
 
 func (c *GeminiLiveClient) ConversationID() string {
@@ -343,6 +413,18 @@ func (c *GeminiLiveClient) Model() string {
 	return c.model
 }
 
+func (c *GeminiLiveClient) SetBackend(b Backend) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.backend = b
+}
+
+func (c *GeminiLiveClient) Backend() Backend {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.backend
+}
+
 func (c *GeminiLiveClient) setupAllTools(pageConfig llms.PageConfig) {
 	allTools := make(map[string]tools.CustomTools, 16)
 
@@ -353,7 +435,7 @@ func (c *GeminiLiveClient) setupAllTools(pageConfig llms.PageConfig) {
 			Parts: []*genai.Part{
 				genai.NewPartFromText(syso),
 			},
-			Role: "model",
+			Role: "user",
 		}
 
 		cancelTool := gemini.OrderCancellationAgent{}
@@ -442,6 +524,7 @@ func tooToFunctionDeclaration(tool tools.CustomTools) *genai.FunctionDeclaration
 		Name:        tool.GetName(),
 		Description: tool.GetDescription(),
 		Parameters:  nil,
+		Behavior:    genai.BehaviorBlocking,
 	}
 }
 
@@ -453,50 +536,122 @@ func (c *GeminiLiveClient) Connect() error {
 	}
 	c.mu.Unlock()
 
-	// 1. Fetch Service Account credentials from consul / config
-	creds := consul.ApiKeys.GeminiCredsVB
-	credsBytes, _ := json.Marshal(creds)
-
-	// 2. Generate signed OAuth2 access token
-	var tokenValue string
-	options := credentials.DetectOptions{
-		CredentialsJSON: credsBytes,
-		Scopes:          []string{"https://www.googleapis.com/auth/cloud-platform"},
-	}
-	credsFromFile, err := credentials.DetectDefault(&options)
-	if err != nil {
-		c.LogError("Failed to detect credentials: %v", err)
-	} else {
-		tok, errTok := credsFromFile.Token(c.ctx)
-		if errTok != nil {
-			c.LogError("Failed to obtain token from credentials: %v", errTok)
-		} else if tok != nil {
-			tokenValue = tok.Value
-		}
-	}
-
-	if tokenValue == "" {
-		// #nosec G101 -- Offline sandbox fallback token when Google Cloud credentials are unavailable
-		tokenValue = "mock-bearer-token"
-	}
-
-	projectID, ok := creds["project_id"].(string)
-	if !ok || projectID == "" {
-		projectID = "mock-bard-pilot-project-id"
-	}
-	location := "us-central1"
-
-	// 3. Construct barebones Vertex AI WebSocket URL
-	wsURL := fmt.Sprintf("wss://%s-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent", location)
-
+	var wsURL string
 	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+tokenValue)
+	var projectID, location string
+
+	if c.Backend() == BackendAIStudio {
+		apiKey := os.Getenv("GEMINI_API_KEY")
+		if apiKey == "" {
+			if keyVal, ok := consul.ApiKeys.GeminiCredsVB["api_key"].(string); ok && keyVal != "" {
+				apiKey = keyVal
+			}
+		}
+		if apiKey == "" {
+			for _, envPath := range []string{".env", "../.env", "../../.env"} {
+				if data, err := os.ReadFile(envPath); err == nil {
+					for _, line := range strings.Split(string(data), "\n") {
+						line = strings.TrimSpace(line)
+						if strings.HasPrefix(line, "GEMINI_API_KEY=") {
+							apiKey = strings.Trim(strings.TrimPrefix(line, "GEMINI_API_KEY="), "\"' \r")
+							break
+						}
+					}
+				}
+				if apiKey != "" {
+					break
+				}
+			}
+		}
+		if apiKey == "" {
+			c.LogError("GEMINI_API_KEY not found for AI Studio backend")
+			c.cancel()
+			return fmt.Errorf("GEMINI_API_KEY is required for AI Studio backend")
+		}
+
+		wsURL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
+		headers.Set("x-goog-api-key", apiKey)
+	} else {
+		projectID = os.Getenv("GCP_PROJECT_ID")
+		if projectID == "" {
+			if projVal, ok := consul.ApiKeys.GeminiCredsVB["project_id"].(string); ok && projVal != "" {
+				projectID = projVal
+			}
+		}
+		if projectID == "" {
+			projectID = "mock-bard-pilot-project-id"
+		}
+
+		location = os.Getenv("GCP_LOCATION")
+		if location == "" {
+			location = "us-central1"
+		}
+
+		var tokenValue string
+		if tokEnv := os.Getenv("GCP_ACCESS_TOKEN"); tokEnv != "" {
+			tokenValue = tokEnv
+		}
+
+		// Try service account creds from consul if private key is not mock
+		if tokenValue == "" {
+			creds := consul.ApiKeys.GeminiCredsVB
+			privKey, _ := creds["private_key"].(string)
+			if privKey != "" && !strings.Contains(privKey, "MOCK") {
+				credsBytes, _ := json.Marshal(creds)
+				opts := credentials.DetectOptions{
+					CredentialsJSON: credsBytes,
+					Scopes:          []string{"https://www.googleapis.com/auth/cloud-platform"},
+				}
+				if credsFromFile, err := credentials.DetectDefault(&opts); err == nil {
+					if tok, errTok := credsFromFile.Token(c.ctx); errTok == nil && tok != nil {
+						tokenValue = tok.Value
+					}
+				}
+			}
+		}
+
+		// Try standard Application Default Credentials (ADC)
+		if tokenValue == "" {
+			opts := credentials.DetectOptions{
+				Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+			}
+			if adcCreds, err := credentials.DetectDefault(&opts); err == nil {
+				if tok, errTok := adcCreds.Token(c.ctx); errTok == nil && tok != nil {
+					tokenValue = tok.Value
+				}
+			}
+		}
+
+		// Fallback to gcloud CLI access token
+		if tokenValue == "" {
+			if out, err := exec.CommandContext(c.ctx, "gcloud", "auth", "print-access-token").Output(); err == nil {
+				tokenValue = strings.TrimSpace(string(out))
+			}
+		}
+
+		if tokenValue == "" {
+			// #nosec G101 -- Offline sandbox fallback token when Google Cloud credentials are unavailable
+			tokenValue = "mock-bearer-token"
+		}
+
+		apiVer := "v1"
+		if strings.Contains(c.model, "3.8") {
+			apiVer = "v1beta1"
+		}
+		wsURL = fmt.Sprintf("wss://%s-aiplatform.googleapis.com/ws/google.cloud.aiplatform.%s.LlmBidiService/BidiGenerateContent", location, apiVer)
+		headers.Set("Authorization", "Bearer "+tokenValue)
+	}
 
 	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
+		HandshakeTimeout: 15 * time.Second,
 	}
 
-	conn, _, err := dialer.DialContext(c.ctx, wsURL, headers)
+	conn, resp, err := dialer.DialContext(c.ctx, wsURL, headers)
+	if resp != nil {
+		for k, v := range resp.Header {
+			c.LogInfo("Handshake Header: %s = %v", k, v)
+		}
+	}
 	if err != nil {
 		c.LogError("Failed to dial WebSocket %s: %v", wsURL, err)
 		c.cancel()
@@ -519,16 +674,31 @@ func (c *GeminiLiveClient) Connect() error {
 	go c.handleWebSocketWrites()
 	go c.heartbeat()
 
-	c.LogInfo("Successfully connected to Gemini Live via Barebones WebSocket")
+	c.LogInfo("Successfully connected to Gemini Live via Barebones WebSocket (%s backend)", c.Backend())
 	return nil
 }
 
 func (c *GeminiLiveClient) sendSetupPayload(projectID, location string) error {
-	fullModel := fmt.Sprintf("projects/%s/locations/%s/publishers/google/models/%s", projectID, location, c.model)
+	var fullModel string
+	if c.Backend() == BackendAIStudio {
+		if strings.HasPrefix(c.model, "models/") {
+			fullModel = c.model
+		} else if c.model == DefaultAudioModel {
+			fullModel = "models/gemini-2.5-flash-native-audio-latest"
+		} else {
+			fullModel = "models/" + c.model
+		}
+	} else {
+		cleanModel := strings.TrimPrefix(c.model, "models/")
+		fullModel = fmt.Sprintf("projects/%s/locations/%s/publishers/google/models/%s", projectID, location, cleanModel)
+	}
 
 	var modalities []string
 	for _, m := range c.sessionConfig.ResponseModalities {
 		modalities = append(modalities, string(m))
+	}
+	if len(modalities) == 0 {
+		modalities = []string{"AUDIO"}
 	}
 
 	setupMsg := bidiSetupPayload{
@@ -555,6 +725,33 @@ func (c *GeminiLiveClient) sendSetupPayload(projectID, location string) error {
 		}
 	}
 
+	if c.sessionConfig.ContextWindowCompression != nil {
+		setupMsg.Setup.ContextWindowCompression = &bidiContextWindowCompressionConfig{
+			TriggerTokens: c.sessionConfig.ContextWindowCompression.TriggerTokens,
+		}
+		if c.sessionConfig.ContextWindowCompression.SlidingWindow != nil {
+			setupMsg.Setup.ContextWindowCompression.SlidingWindow = &bidiSlidingWindow{
+				TargetTokens: c.sessionConfig.ContextWindowCompression.SlidingWindow.TargetTokens,
+			}
+		}
+	}
+
+	if c.sessionConfig.RealtimeInputConfig != nil {
+		ric := &bidiRealtimeInputConfig{
+			TurnCoverage: string(c.sessionConfig.RealtimeInputConfig.TurnCoverage),
+		}
+		if aad := c.sessionConfig.RealtimeInputConfig.AutomaticActivityDetection; aad != nil {
+			ric.AutomaticActivityDetection = &bidiAutomaticActivityDetection{
+				Disabled:                 aad.Disabled,
+				StartOfSpeechSensitivity: string(aad.StartOfSpeechSensitivity),
+				EndOfSpeechSensitivity:   string(aad.EndOfSpeechSensitivity),
+				PrefixPaddingMs:          aad.PrefixPaddingMs,
+				SilenceDurationMs:        aad.SilenceDurationMs,
+			}
+		}
+		setupMsg.Setup.RealtimeInputConfig = ric
+	}
+
 	if c.sessionConfig.SystemInstruction != nil {
 		var parts []*bidiPart
 		for _, p := range c.sessionConfig.SystemInstruction.Parts {
@@ -578,10 +775,15 @@ func (c *GeminiLiveClient) sendSetupPayload(projectID, location string) error {
 						if tObj, ok := c.tools[fd.Name]; ok {
 							params = tObj.GetParameters()
 						}
+						behavior := ""
+						if c.Backend() == BackendVertex && fd.Behavior != "" {
+							behavior = string(fd.Behavior)
+						}
 						fds = append(fds, &bidiFunctionDeclaration{
 							Name:        fd.Name,
 							Description: fd.Description,
 							Parameters:  params,
+							Behavior:    behavior,
 						})
 					}
 				}
@@ -644,13 +846,13 @@ func (c *GeminiLiveClient) SendAudio(audioData llms.AudioInput) error {
 	}
 	c.mu.RUnlock()
 
+	// Use the `audio` field: `mediaChunks` is deprecated, and gemini-3.8-live on AI Studio
+	// silently ignores audio sent via `mediaChunks` (no transcription, no response).
 	msg := map[string]interface{}{
 		"realtimeInput": map[string]interface{}{
-			"mediaChunks": []map[string]interface{}{
-				{
-					"mimeType": c.MimeType,
-					"data":     base64.StdEncoding.EncodeToString(audioData.ByteData),
-				},
+			"audio": map[string]interface{}{
+				"mimeType": c.MimeType,
+				"data":     base64.StdEncoding.EncodeToString(audioData.ByteData),
 			},
 		},
 	}
@@ -757,15 +959,15 @@ func (c *GeminiLiveClient) receiveResponses() {
 
 			_, messageBytes, err := conn.ReadMessage()
 			if err != nil {
-				c.mu.RLock()
+				c.mu.Lock()
 				isConn := c.connected
-				c.mu.RUnlock()
+				c.connected = false
+				c.mu.Unlock()
 				if !isConn {
 					return
 				}
 				c.LogError("WebSocket read error: %v", err)
-				time.Sleep(100 * time.Millisecond)
-				continue
+				return
 			}
 
 			c.LogInfo("[RAW BIDI RECV]: %s", summarizeBidiMessage(messageBytes))
@@ -801,6 +1003,14 @@ func (c *GeminiLiveClient) processServerResponse(msg *bidiServerMessage) {
 		return
 	}
 
+	if msg.SetupComplete != nil {
+		if msg.SetupComplete.SessionID != "" {
+			c.LogInfo("Live Bidi session setup acknowledged with SessionID: %s", msg.SetupComplete.SessionID)
+		} else {
+			c.LogInfo("Live Bidi session setup acknowledged")
+		}
+	}
+
 	// 1. Process Token Usage Metadata
 	if msg.UsageMetadata != nil && c.callbacks.TokenCalculator != nil {
 		var details []llms.TokenDetail
@@ -819,7 +1029,11 @@ func (c *GeminiLiveClient) processServerResponse(msg *bidiServerMessage) {
 				ModelName:     c.model,
 			})
 		}
-		for _, detail := range msg.UsageMetadata.CandidatesTokensDetails {
+		candDetails := msg.UsageMetadata.CandidatesTokensDetails
+		if len(candDetails) == 0 && len(msg.UsageMetadata.ResponseTokensDetails) > 0 {
+			candDetails = msg.UsageMetadata.ResponseTokensDetails
+		}
+		for _, detail := range candDetails {
 			if detail == nil {
 				continue
 			}
@@ -834,6 +1048,29 @@ func (c *GeminiLiveClient) processServerResponse(msg *bidiServerMessage) {
 				ModelName:     c.model,
 			})
 		}
+		if msg.UsageMetadata.ThoughtsTokenCount > 0 {
+			details = append(details, llms.TokenDetail{
+				TokenType:     llms.TokenTypeOutput,
+				TokenModality: llms.TokenModalityText,
+				TokenCount:    msg.UsageMetadata.ThoughtsTokenCount,
+				ModelName:     c.model,
+			})
+		}
+		for _, detail := range msg.UsageMetadata.ToolUsePromptTokensDetails {
+			if detail == nil {
+				continue
+			}
+			modality := llms.TokenModalityText
+			if strings.EqualFold(detail.Modality, "AUDIO") {
+				modality = llms.TokenModalityAudio
+			}
+			details = append(details, llms.TokenDetail{
+				TokenType:     llms.TokenTypeInput,
+				TokenModality: modality,
+				TokenCount:    detail.TokenCount,
+				ModelName:     c.model,
+			})
+		}
 		if msg.UsageMetadata.CachedContentTokenCount > 0 {
 			details = append(details, llms.TokenDetail{
 				TokenType:     llms.TokenTypeCached,
@@ -841,6 +1078,24 @@ func (c *GeminiLiveClient) processServerResponse(msg *bidiServerMessage) {
 				TokenCount:    msg.UsageMetadata.CachedContentTokenCount,
 				ModelName:     c.model,
 			})
+		}
+		// If both CandidatesTokensDetails and ResponseTokensDetails were empty but candidates were generated
+		if len(candDetails) == 0 {
+			candidateCount := msg.UsageMetadata.CandidatesTokenCount
+			if candidateCount == 0 {
+				candidateCount = msg.UsageMetadata.ResponseTokenCount
+			}
+			if candidateCount == 0 && msg.UsageMetadata.TotalTokenCount > msg.UsageMetadata.PromptTokenCount {
+				candidateCount = msg.UsageMetadata.TotalTokenCount - msg.UsageMetadata.PromptTokenCount
+			}
+			if candidateCount > 0 {
+				details = append(details, llms.TokenDetail{
+					TokenType:     llms.TokenTypeOutput,
+					TokenModality: llms.TokenModalityAudio,
+					TokenCount:    candidateCount,
+					ModelName:     c.model,
+				})
+			}
 		}
 		if len(details) == 0 {
 			if msg.UsageMetadata.PromptTokenCount > 0 {
@@ -865,7 +1120,41 @@ func (c *GeminiLiveClient) processServerResponse(msg *bidiServerMessage) {
 		}
 	}
 
-	// 2. Process Server Content (Model Turn, User Turn, Transcriptions, Interrupted, TurnComplete)
+	// 2. Process Tool Calls (Increment pendingToolCalls before checking TurnComplete)
+	if msg.ToolCall != nil && len(msg.ToolCall.FunctionCalls) > 0 {
+		for _, fc := range msg.ToolCall.FunctionCalls {
+			if fc == nil {
+				continue
+			}
+			toolObj, exists := c.tools[fc.Name]
+			if exists && c.callbacks.ToolExecutionProvider != nil {
+				atomic.AddInt32(&c.pendingToolCalls, 1)
+				argsBytes, _ := json.Marshal(fc.Args)
+				go func(callID, name, argsStr string, t tools.CustomTools) {
+					result, err := c.callbacks.ToolExecutionProvider.ExecuteTool(name, argsStr, t)
+					// Allow any intermediate pre-tool TurnComplete message from Vertex to flush and be ignored
+					time.Sleep(350 * time.Millisecond)
+					atomic.AddInt32(&c.pendingToolCalls, -1)
+					if err == nil && callID != "" {
+						respMsg := map[string]interface{}{
+							"toolResponse": map[string]interface{}{
+								"functionResponses": []map[string]interface{}{
+									{
+										"id":       callID,
+										"name":     name,
+										"response": map[string]interface{}{"result": result},
+									},
+								},
+							},
+						}
+						_ = c.sendEvent(respMsg)
+					}
+				}(fc.ID, fc.Name, string(argsBytes), toolObj)
+			}
+		}
+	}
+
+	// 3. Process Server Content (Model Turn, User Turn, Transcriptions, Interrupted, TurnComplete)
 	if msg.ServerContent != nil {
 		if msg.ServerContent.Interrupted {
 			c.HandleUserInterrupt()
@@ -928,40 +1217,14 @@ func (c *GeminiLiveClient) processServerResponse(msg *bidiServerMessage) {
 			}
 		}
 
-		if msg.ServerContent.TurnComplete || (msg.ServerContent.OutputTranscription != nil && msg.ServerContent.OutputTranscription.Finished) {
-			if c.callbacks.ConversationProvider != nil {
-				c.callbacks.ConversationProvider.CompleteAssistantMessage()
-				c.callbacks.ConversationProvider.CompleteUserMessage()
-			}
-		}
-	}
-
-	// 3. Process Tool Calls
-	if msg.ToolCall != nil && len(msg.ToolCall.FunctionCalls) > 0 {
-		for _, fc := range msg.ToolCall.FunctionCalls {
-			if fc == nil {
-				continue
-			}
-			toolObj, exists := c.tools[fc.Name]
-			if exists && c.callbacks.ToolExecutionProvider != nil {
-				argsBytes, _ := json.Marshal(fc.Args)
-				go func(callID, name, argsStr string, t tools.CustomTools) {
-					result, err := c.callbacks.ToolExecutionProvider.ExecuteTool(name, argsStr, t)
-					if err == nil && callID != "" {
-						respMsg := map[string]interface{}{
-							"toolResponse": map[string]interface{}{
-								"functionResponses": []map[string]interface{}{
-									{
-										"id":       callID,
-										"name":     name,
-										"response": map[string]interface{}{"result": result},
-									},
-								},
-							},
-						}
-						_ = c.sendEvent(respMsg)
-					}
-				}(fc.ID, fc.Name, string(argsBytes), toolObj)
+		if msg.ServerContent.TurnComplete {
+			if atomic.LoadInt32(&c.pendingToolCalls) == 0 {
+				if c.callbacks.ConversationProvider != nil {
+					c.callbacks.ConversationProvider.CompleteAssistantMessage()
+					c.callbacks.ConversationProvider.CompleteUserMessage()
+				}
+			} else {
+				c.LogInfo("Ignoring intermediate TurnComplete while %d tool call(s) pending", atomic.LoadInt32(&c.pendingToolCalls))
 			}
 		}
 	}

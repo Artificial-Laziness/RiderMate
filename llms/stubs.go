@@ -100,8 +100,8 @@ type Callbacks struct {
 }
 
 // Global System Instruction Prompts
-var BaseInstructionPromptRiderSupportJustAudio = "You are a helpful delivery rider voice assistant for RiderMate. Speak concisely and clearly."
+var BaseInstructionPromptRiderSupportJustAudio = "You are RiderMate delivery voice assistant. Reply in 1 short sentence (max 8 words), no follow-up questions."
 
 func GetBaseInstructionPromptRiderSupport() string {
-	return "You are a helpful hands-free voice assistant for BRAND_NAME delivery riders. Support riders with active order status, delivery routes, payout queries, store delays, and rider support escalation."
+	return "You are BRAND_NAME rider voice assistant. Reply in 1 short sentence (max 8 words), no filler or follow-up questions. Answer how-to, protocol, or route questions directly without tools. Call at most 1 tool per turn, only when live order/payout lookup or logging is explicitly requested."
 }

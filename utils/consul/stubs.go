@@ -30,7 +30,17 @@ func init() {
 	loadEnv("../../.env")
 
 	// 1. Try loading credentials from a Google Cloud Service Account JSON file path
-	if credsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); credsPath != "" {
+	credsPaths := []string{
+		os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+		"credentials.json",
+		"aawishkar-e690e1caf6dc.json",
+		"../VocalRx/aawishkar-e690e1caf6dc.json",
+		"../../VocalRx/aawishkar-e690e1caf6dc.json",
+	}
+	for _, credsPath := range credsPaths {
+		if credsPath == "" {
+			continue
+		}
 		cleanPath := filepath.Clean(credsPath)
 		if fileBytes, err := os.ReadFile(cleanPath); err == nil { // #nosec G304, G703
 			var credsMap map[string]interface{}

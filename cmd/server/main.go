@@ -66,13 +66,14 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	defer ws.Close()
 
 	log.Println("New browser client connected to Real-time Stream Proxy")
+	atomic.StoreInt32(&sandboxTurnCount, 0)
 
 	// Config
 	pageConfig := llms.PageConfig{
 		PageName:      "RIDER_SUPPORT",
 		IsCustomModel: false,
 		BrandName:     "RiderMate",
-		Instruction:   "Provide instant, voice-first assistance to delivery riders on active orders, earnings, route guidance, and support.",
+		Instruction:   "",
 	}
 
 	client, err := gemini.NewGeminiLiveClient("conn-"+fmt.Sprintf("%d", time.Now().Unix()), llms.AudioModeAudio, pageConfig)
@@ -264,9 +265,15 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+var sandboxTurnCount int32
+
 // emulateSandboxDialogue builds a natural conversation timeline for testing UI components
 func emulateSandboxDialogue(prompt string, writeJSON func(WSMessage) error) {
-	time.Sleep(1 * time.Second)
+	turn := int(atomic.AddInt32(&sandboxTurnCount, 1))
+	baseInputText := 83 + (turn-1)*125
+	baseInputAudio := (turn - 1) * 80
+
+	time.Sleep(800 * time.Millisecond)
 
 	// 1. Send assistant start typing/transcription
 	_ = writeJSON(WSMessage{
@@ -274,21 +281,36 @@ func emulateSandboxDialogue(prompt string, writeJSON func(WSMessage) error) {
 		Text: "Checking that for you right now, rider. ",
 	})
 
-	// Send mock structured tokens measurement for visualization
-	_ = writeJSON(WSMessage{
-		Type: "metrics",
-		TokenDetails: []TokenDetailJSON{
-			{Type: "input", Modality: "text", Count: 184},
-			{Type: "input", Modality: "audio", Count: 420},
-			{Type: "output", Modality: "text", Count: 75},
-			{Type: "output", Modality: "audio", Count: 960},
-		},
-	})
+	isToolTurn := containsAny(prompt, "cancel", "refund", "status", "order", "agent", "human", "transfer", "support", "earning", "payout", "pay", "money")
+
+	if isToolTurn {
+		// Emit Event #1 (Pre-tool usageMetadata snapshot, just like Vertex AI)
+		_ = writeJSON(WSMessage{
+			Type: "metrics",
+			TokenDetails: []TokenDetailJSON{
+				{Type: "input", Modality: "text", Count: baseInputText},
+				{Type: "input", Modality: "audio", Count: baseInputAudio},
+				{Type: "output", Modality: "text", Count: 5},
+				{Type: "output", Modality: "audio", Count: 0},
+			},
+		})
+	} else {
+		// Single event for non-tool turn
+		_ = writeJSON(WSMessage{
+			Type: "metrics",
+			TokenDetails: []TokenDetailJSON{
+				{Type: "input", Modality: "text", Count: baseInputText},
+				{Type: "input", Modality: "audio", Count: baseInputAudio},
+				{Type: "output", Modality: "text", Count: 16},
+				{Type: "output", Modality: "audio", Count: 85},
+			},
+		})
+	}
 
 	// 2. Play minor voice chime/audio
-	streamSineMockAudio(440, 0.5, writeJSON)
+	streamSineMockAudio(440, 0.4, writeJSON)
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(800 * time.Millisecond)
 
 	// 3. Emulate tool activation if user asked for cancellation/status/earning/support
 	if containsAny(prompt, "cancel", "refund", "status", "order") {
@@ -300,9 +322,15 @@ func emulateSandboxDialogue(prompt string, writeJSON func(WSMessage) error) {
 				"reason":  "Store closed / rider emergency",
 			},
 		})
-		time.Sleep(2 * time.Second)
+		time.Sleep(1500 * time.Millisecond)
 
-		// Tool complete result
+		_ = writeJSON(WSMessage{
+			Type:     "tool_response",
+			ToolName: "OrderCancellationAgent",
+			Text:     `{"status":"verified","compensation_inr":45}`,
+		})
+
+		// Tool complete spoken result
 		_ = writeJSON(WSMessage{
 			Type: "text",
 			Text: "I found order RD892104. The order cancellation has been verified, and a delay compensation fee of ₹45 has been credited to your rider account.",
@@ -318,6 +346,13 @@ func emulateSandboxDialogue(prompt string, writeJSON func(WSMessage) error) {
 			},
 		})
 		time.Sleep(1500 * time.Millisecond)
+
+		_ = writeJSON(WSMessage{
+			Type:     "tool_response",
+			ToolName: "AgentConnectTool",
+			Text:     `{"status":"connected","queue":"priority_line"}`,
+		})
+
 		_ = writeJSON(WSMessage{
 			Type: "text",
 			Text: "Connecting you directly to Rider Support Priority Line. Please hold on and stay safe.",
@@ -333,6 +368,13 @@ func emulateSandboxDialogue(prompt string, writeJSON func(WSMessage) error) {
 			},
 		})
 		time.Sleep(1500 * time.Millisecond)
+
+		_ = writeJSON(WSMessage{
+			Type:     "tool_response",
+			ToolName: "EnquiryTool",
+			Text:     `{"earnings_today_inr":1480,"orders":12,"incentive_inr":150}`,
+		})
+
 		_ = writeJSON(WSMessage{
 			Type: "text",
 			Text: "Your total earnings today are ₹1,480 across 12 completed orders, including ₹150 in peak incentive bonuses.",
@@ -345,6 +387,19 @@ func emulateSandboxDialogue(prompt string, writeJSON func(WSMessage) error) {
 			Text: "I can assist you with active order updates, store delays, earnings queries, or connecting to Rider Support. What do you need?",
 		})
 		streamSineMockAudio(520, 0.8, writeJSON)
+	}
+
+	if isToolTurn {
+		// Emit Event #2 (Post-tool final usageMetadata snapshot, showing cumulative watermark + spoken output)
+		_ = writeJSON(WSMessage{
+			Type: "metrics",
+			TokenDetails: []TokenDetailJSON{
+				{Type: "input", Modality: "text", Count: baseInputText + 38},
+				{Type: "input", Modality: "audio", Count: baseInputAudio},
+				{Type: "output", Modality: "text", Count: 22},
+				{Type: "output", Modality: "audio", Count: 94},
+			},
+		})
 	}
 
 	_ = writeJSON(WSMessage{Type: "audio_done"})
@@ -496,9 +551,7 @@ func (w *wsToolExecutionProvider) ExecuteTool(name, arguments string, tool tools
 		ToolArgs: argsMap,
 	})
 
-	// Perform standard mock behavior or let it execute
-	time.Sleep(1 * time.Second)
-	result := fmt.Sprintf(`{"status": "success", "result": "Mock result for tool %s"}`, name)
+	result := `{"ok":true,"id":"1234","dest":"45 Garden St","next":"Burger Barn to 102 Oak Ave","payout":"$7.50","bonus":"peak active"}`
 
 	_ = w.writeJSON(WSMessage{
 		Type:     "tool_response",

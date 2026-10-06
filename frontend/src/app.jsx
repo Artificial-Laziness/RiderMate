@@ -24,6 +24,10 @@ export function App() {
     cachedAudio: 0,
     outputText: 0,
     outputAudio: 0,
+    naiveInputText: 0,
+    naiveInputAudio: 0,
+    eventsCount: 0,
+    peakInput: 0,
   });
 
   const audioManagerRef = useRef(null);
@@ -61,6 +65,10 @@ export function App() {
         cachedAudio: 0,
         outputText: 0,
         outputAudio: 0,
+        naiveInputText: 0,
+        naiveInputAudio: 0,
+        eventsCount: 0,
+        peakInput: 0,
       });
 
       await audioManagerRef.current.init();
@@ -168,21 +176,48 @@ export function App() {
         if (tokenDetails && tokenDetails.length > 0) {
           setTokenCounts(prev => {
             const updated = { ...prev };
+            let pktInputText = 0;
+            let pktInputAudio = 0;
+            let pktOutputText = 0;
+            let pktOutputAudio = 0;
+            let pktCachedText = 0;
+            let pktCachedAudio = 0;
+
             tokenDetails.forEach(detail => {
               const type = detail.type || detail.Type || '';
               const modality = detail.modality || detail.Modality || '';
               const count = detail.count !== undefined ? detail.count : (detail.Count !== undefined ? detail.Count : 0);
               if (type === 'input') {
-                if (modality === 'text') updated.inputText = (prev.inputText || 0) + count;
-                else if (modality === 'audio') updated.inputAudio = (prev.inputAudio || 0) + count;
+                if (modality === 'text') pktInputText += count;
+                else if (modality === 'audio') pktInputAudio += count;
               } else if (type === 'cached') {
-                if (modality === 'text') updated.cachedText = (prev.cachedText || 0) + count;
-                else if (modality === 'audio') updated.cachedAudio = (prev.cachedAudio || 0) + count;
+                if (modality === 'text') pktCachedText += count;
+                else if (modality === 'audio') pktCachedAudio += count;
               } else if (type === 'output') {
-                if (modality === 'text') updated.outputText = (prev.outputText || 0) + count;
-                else if (modality === 'audio') updated.outputAudio = (prev.outputAudio || 0) + count;
+                if (modality === 'text') pktOutputText += count;
+                else if (modality === 'audio') pktOutputAudio += count;
               }
             });
+
+            // 1. Normalized Watermark Accounting (input is active context window gauge)
+            if (pktInputText > 0 || pktInputAudio > 0) {
+              updated.inputText = pktInputText;
+              updated.inputAudio = pktInputAudio;
+              const pktTotalInput = pktInputText + pktInputAudio;
+              updated.peakInput = Math.max(prev.peakInput || 0, pktTotalInput);
+            }
+
+            // 2. Naive Event-Summed Accounting (summing promptTokenCount across every packet)
+            updated.naiveInputText = (prev.naiveInputText || 0) + pktInputText;
+            updated.naiveInputAudio = (prev.naiveInputAudio || 0) + pktInputAudio;
+            updated.eventsCount = (prev.eventsCount || 0) + 1;
+
+            // 3. Output & Cached Tokens (incremental deltas per generation step)
+            updated.outputText = (prev.outputText || 0) + pktOutputText;
+            updated.outputAudio = (prev.outputAudio || 0) + pktOutputAudio;
+            updated.cachedText = (prev.cachedText || 0) + pktCachedText;
+            updated.cachedAudio = (prev.cachedAudio || 0) + pktCachedAudio;
+
             return updated;
           });
         }

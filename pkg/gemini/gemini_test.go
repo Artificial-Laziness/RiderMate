@@ -26,4 +26,14 @@ func TestNewGeminiLiveClient(t *testing.T) {
 	if client.Model() != gemini.DefaultAudioModel {
 		t.Errorf("Expected default model %s, got %s", gemini.DefaultAudioModel, client.Model())
 	}
+
+	// Test Backend getter and setter
+	if client.Backend() != gemini.BackendVertex {
+		t.Errorf("Expected default backend %s, got %s", gemini.BackendVertex, client.Backend())
+	}
+
+	client.SetBackend(gemini.BackendAIStudio)
+	if client.Backend() != gemini.BackendAIStudio {
+		t.Errorf("Expected backend %s after SetBackend, got %s", gemini.BackendAIStudio, client.Backend())
+	}
 }

@@ -36,50 +36,26 @@ func (AddonPurchaseAgent) GetName() string     { return "AddonPurchaseAgent" }
 func (OrderStatusTool) GetName() string        { return "OrderStatusTool" }
 func (EndCallTool) GetName() string            { return "EndCallTool" }
 
-func (OrderCancellationAgent) GetDescription() string {
-	return "Cancel active delivery order due to rider emergency, vehicle breakdown, or store closure"
-}
-func (OrderReceiptTool) GetDescription() string {
-	return "Retrieve delivery order receipt and itemized customer invoice"
-}
-func (StoreArrivalTool) GetDescription() string {
-	return "Confirm rider arrival at merchant store or customer drop-off location"
-}
-func (ContactNoteTool) GetDescription() string {
-	return "Update customer contact notes or address landmark"
-}
-func (SpecialClaimTool) GetDescription() string {
-	return "Submit payout dispute, order damage report, or missing item claim"
-}
-func (ObservabilityTool) GetDescription() string {
-	return "System observability, rider GPS tracking, and connection status"
-}
-func (DateChangeAgent) GetDescription() string {
-	return "Request delivery time extension or reschedule customer slot"
-}
-func (AgentConnectTool) GetDescription() string {
-	return "Transfer conversation to a human rider support representative"
-}
-func (EnquiryTool) GetDescription() string {
-	return "Handle rider earnings, weekly payouts, and incentive bonus queries"
-}
-func (BaggageTool) GetDescription() string {
-	return "Check thermal bag requirements, cargo capacity, and weight limits"
-}
-func (AddonPurchaseAgent) GetDescription() string {
-	return "Order replacement rider gear, rain suits, or delivery helmets"
-}
-func (OrderStatusTool) GetDescription() string {
-	return "Track active delivery order status and merchant preparation timer"
-}
-func (EndCallTool) GetDescription() string { return "Hang up or end rider voice session" }
+func (OrderCancellationAgent) GetDescription() string { return "Cancel order" }
+func (OrderReceiptTool) GetDescription() string       { return "Get order receipt" }
+func (StoreArrivalTool) GetDescription() string       { return "Log store arrival" }
+func (ContactNoteTool) GetDescription() string        { return "Notify customer or log wait time" }
+func (SpecialClaimTool) GetDescription() string       { return "File claim" }
+func (ObservabilityTool) GetDescription() string      { return "Check app diagnostics" }
+func (DateChangeAgent) GetDescription() string        { return "Extend delivery slot" }
+func (AgentConnectTool) GetDescription() string       { return "Call customer or human support" }
+func (EnquiryTool) GetDescription() string            { return "Check trip payout or bonus" }
+func (BaggageTool) GetDescription() string            { return "Check bag rules" }
+func (AddonPurchaseAgent) GetDescription() string     { return "Order rider gear" }
+func (OrderStatusTool) GetDescription() string        { return "Get active or next order destination" }
+func (EndCallTool) GetDescription() string            { return "End call" }
 
 func (OrderCancellationAgent) GetParameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "OBJECT",
 		"properties": map[string]interface{}{
-			"orderId": map[string]interface{}{"type": "STRING", "description": "Active order ID"},
-			"reason":  map[string]interface{}{"type": "STRING", "description": "Cancellation reason"},
+			"orderId": map[string]interface{}{"type": "STRING"},
+			"reason":  map[string]interface{}{"type": "STRING"},
 		},
 	}
 }
@@ -93,7 +69,7 @@ func (AgentConnectTool) GetParameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "OBJECT",
 		"properties": map[string]interface{}{
-			"queue": map[string]interface{}{"type": "STRING", "description": "Priority queue name"},
+			"queue": map[string]interface{}{"type": "STRING"},
 		},
 	}
 }
@@ -101,7 +77,7 @@ func (EnquiryTool) GetParameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "OBJECT",
 		"properties": map[string]interface{}{
-			"query": map[string]interface{}{"type": "STRING", "description": "Payout or earnings query"},
+			"query": map[string]interface{}{"type": "STRING"},
 		},
 	}
 }
@@ -111,7 +87,7 @@ func (OrderStatusTool) GetParameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "OBJECT",
 		"properties": map[string]interface{}{
-			"orderId": map[string]interface{}{"type": "STRING", "description": "Active delivery order ID"},
+			"orderId": map[string]interface{}{"type": "STRING"},
 		},
 	}
 }
